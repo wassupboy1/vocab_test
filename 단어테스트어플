@@ -1,0 +1,508 @@
+import React, { useState, useEffect } from 'react';
+
+// 공통 퀴즈 데이터
+const initialQuizData = [
+    ["制度", "せいど", "제도"],
+    ["治療効果", "ちりょうこうか", "치료 효과"],
+    ["認可", "にんか", "인가"],
+    ["情報提供", "じょうほうていきょう", "정보 제공"],
+    ["認識", "にんしき", "인식"],
+    ["連携", "れんけい", "연계"],
+    ["動物医療", "どうぶついりょう", "동물 의료"],
+    ["細菌", "さいきん", "세균"],
+    ["治療", "ちりょう", "치료"],
+    ["報告", "ほうこく", "보고"],
+    ["拡散", "かくさん", "확산"],
+    ["政策", "せいさく", "정책"],
+    ["使命感", "しめいかん", "사명감"],
+    ["殺菌", "さっきん", "살균"],
+    ["分野", "ぶんや", "분야"],
+    ["収集", "しゅうしゅう", "수집"],
+    ["法律", "ほうりつ", "법률"],
+    ["行動変容", "こうどうへんよう", "행동 변화"],
+    ["倫理観", "りんりかん", "윤리관"],
+    ["倫理", "りんり", "윤리"],
+    ["耐性遺伝子", "たいせいいでんし", "내성 유전자"],
+    ["抗生物質", "こうせいぶっしつ", "항생물질"],
+    ["ウイルス", "ういるす", "바이러스"],
+    ["普及", "ふきゅう", "보급"],
+    ["感染管理", "かんせんかんり", "감염 관리"],
+    ["感染拡大", "かんせんかくだい", "감염 확대"],
+    ["獣医師", "じゅういし", "수의사"],
+    ["影響", "えいきょう", "영향"],
+    ["多剤耐성菌", "たざいたいせいきん", "다제내성균"],
+    ["病原体", "びょうげんたい", "병원체"],
+    ["指導", "しどう", "지도"],
+    ["自覚", "じかく", "자각"],
+    ["使命", "しめい", "사명"],
+    ["学際的", "がくさいてき", "학제적"],
+    ["処方", "しょほう", "처방"],
+    ["危機", "きき", "위기"],
+    ["発生源", "はっせいげん", "발생원"],
+    ["診断", "しんだん", "진단"],
+    ["実行", "じっこう", "실행"],
+    ["畜산업", "ちくさんぎょう", "축산업"],
+    ["抗菌薬使用", "こうきんやくしよう", "항균제 사용"],
+    ["ヒト医療", "ひといりょう", "인간 의료"],
+    ["ワンヘルス", "わんへる스", "원헬스"],
+    ["食物連鎖", "しょくもつれんさ", "먹이사슬"],
+    ["予防", "よぼう", "예방"],
+    ["責任", "せきにん", "책임"],
+    ["責무", "せきむ", "책무"],
+    ["育成", "いくせい", "육성"],
+    ["未来志向", "みらいしこう", "미래 지향"],
+    ["環境", "かんきょう", "환경"]
+];
+
+/**
+ * Gemini API를 호출하여 텍스트 또는 구조화된 응답을 생성하는 유틸리티 함수입니다.
+ * @param {string} prompt - LLM에게 보낼 프롬프트.
+ * @param {object} [responseSchema] - 응답을 위한 JSON 스키마 (선택 사항).
+ * @returns {Promise<string|object>} - LLM이 생성한 텍스트 또는 JSON 객체.
+ */
+const callGeminiAPI = async (prompt, responseSchema = null) => {
+    const chatHistory = [];
+    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+
+    const generationConfig = responseSchema ? { responseMimeType: "application/json", responseSchema } : {};
+    const payload = { contents: chatHistory, generationConfig };
+
+    const apiKey = ""; // API 키는 비워두어 런타임에 자동으로 제공되도록 합니다.
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+    try {
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+
+        if (result.candidates && result.candidates.length > 0 &&
+            result.candidates[0].content && result.candidates[0].content.parts &&
+            result.candidates[0].content.parts.length > 0) {
+            const text = result.candidates[0].content.parts[0].text;
+            return responseSchema ? JSON.parse(text) : text;
+        } else {
+            console.error("Gemini API 응답 구조가 예상과 다릅니다:", result);
+            return responseSchema ? { error: "응답을 생성할 수 없습니다." } : "응답을 생성할 수 없습니다.";
+        }
+    } catch (error) {
+        console.error("Gemini API 호출 중 오류 발생:", error);
+        return responseSchema ? { error: "API 호출 중 오류가 발생했습니다." } : "API 호출 중 오류가 발생했습니다.";
+    }
+};
+
+// 단어 공부 페이지 컴포넌트
+const StudyPage = ({ quizData }) => {
+    // LLM으로 생성된 응답을 저장하는 상태
+    const [generatedResponses, setGeneratedResponses] = useState({});
+    // SpeechSynthesisUtterance 인스턴스 저장
+    const [utterance, setUtterance] = useState(null);
+    // 현재 재생 중인 인덱스
+    const [speakingIndex, setSpeakingIndex] = useState(null);
+
+    // 컴포넌트 마운트 시 SpeechSynthesisUtterance 인스턴스 생성 및 설정
+    useEffect(() => {
+        const u = new SpeechSynthesisUtterance();
+        u.lang = 'ja-JP'; // 일본어 설정
+        u.rate = 0.9; // 재생 속도 조절 (선택 사항)
+        u.pitch = 1.0; // 음성 높낮이 조절 (선택 사항)
+        setUtterance(u);
+
+        // 음성 재생이 끝났을 때 speakingIndex 초기화
+        u.onend = () => {
+            setSpeakingIndex(null);
+        };
+
+        // cleanup 함수: 컴포넌트 언마운트 시 현재 재생 중인 음성 중지
+        return () => {
+            if (speechSynthesis.speaking) {
+                speechSynthesis.cancel();
+            }
+        };
+    }, []);
+
+    /**
+     * 특정 단어에 대한 일본어 예문과 한국어 번역을 생성합니다.
+     * @param {number} index - 퀴즈 항목의 인덱스.
+     * @param {string} word - 예문을 생성할 일본어 단어.
+     */
+    const handleGenerateExample = async (index, word) => {
+        setGeneratedResponses(prevResponses => ({
+            ...prevResponses,
+            [index]: { ...prevResponses[index], loadingExample: true, example: null }
+        }));
+
+        const prompt = `Generate a short example sentence in Japanese using the word "${word}" and its Korean translation. Return the response as a JSON object with keys "japaneseSentence" and "koreanTranslation".`;
+        const responseSchema = {
+            type: "OBJECT",
+            properties: {
+                japaneseSentence: { type: "STRING" },
+                koreanTranslation: { type: "STRING" }
+            },
+            propertyOrdering: ["japaneseSentence", "koreanTranslation"]
+        };
+        const generatedContent = await callGeminiAPI(prompt, responseSchema);
+
+        setGeneratedResponses(prevResponses => ({
+            ...prevResponses,
+            [index]: { ...prevResponses[index], loadingExample: false, example: generatedContent }
+        }));
+    };
+
+    /**
+     * 특정 단어에 대한 관련 개념 설명을 생성합니다.
+     * @param {number} index - 퀴즈 항목의 인덱스.
+     * @param {string} word - 관련 개념을 설명할 일본어 단어.
+     */
+    const handleExplainConcept = async (index, word) => {
+        setGeneratedResponses(prevResponses => ({
+            ...prevResponses,
+            [index]: { ...prevResponses[index], loadingConcept: true, concept: null }
+        }));
+
+        const prompt = `For the Japanese word "${word}", provide a brief explanation of a related concept or its context in Korean. Keep it concise, under 50 words.`;
+        const generatedText = await callGeminiAPI(prompt);
+
+        setGeneratedResponses(prevResponses => ({
+            ...prevResponses,
+            [index]: { ...prevResponses[index], loadingConcept: false, concept: generatedText }
+        }));
+    };
+
+    /**
+     * 일본어 문장을 음성으로 읽어줍니다.
+     * @param {string} text - 읽어줄 일본어 문장.
+     * @param {number} index - 현재 재생 중인 퀴즈 항목의 인덱스.
+     */
+    const handleSpeakJapanese = (text, index) => {
+        if (utterance && 'speechSynthesis' in window) {
+            speechSynthesis.cancel(); // 현재 재생 중인 음성 중지
+            utterance.text = text; // 읽어줄 텍스트 설정
+
+            // 일본어 음성 찾기
+            const voices = speechSynthesis.getVoices();
+            const japaneseVoice = voices.find(voice => voice.lang === 'ja-JP' || voice.lang.startsWith('ja-'));
+            if (japaneseVoice) {
+                utterance.voice = japaneseVoice;
+            } else {
+                console.warn("일본어 음성을 찾을 수 없습니다. 기본 음성으로 재생됩니다.");
+            }
+
+            speechSynthesis.speak(utterance); // 음성 재생 시작
+            setSpeakingIndex(index); // 재생 중인 인덱스 설정
+        } else {
+            console.warn("Speech Synthesis API를 지원하지 않는 브라우저입니다.");
+            // 사용자에게 메시지를 표시하는 모달 또는 UI를 사용하는 것이 더 좋습니다.
+            // 예를 들어, alert 대신 사용자 지정 메시지 박스를 구현할 수 있습니다.
+            // showCustomMessageBox("이 브라우저에서는 음성 합성 기능을 지원하지 않습니다.");
+        }
+    };
+
+    return (
+        <section className="mb-10">
+            <h2 className="text-2xl sm:text-3xl font-bold text-blue-700 mb-5 border-l-4 border-blue-400 pl-3">
+                단어 공부
+            </h2>
+            <ul className="list-none p-0 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                {quizData.map((item, index) => (
+                    <li key={index} className="flex flex-col mb-4 p-4 border border-blue-100 rounded-lg shadow-sm bg-blue-50">
+                        <div className="flex items-baseline mb-2">
+                            <span className="text-blue-900 font-semibold text-lg mr-2 w-8 text-right">
+                                {index + 1}.
+                            </span>
+                            <span className="text-gray-800 text-2xl font-bold flex-grow">
+                                {item[0]} {/* 일본어 한자 단어 */}
+                            </span>
+                        </div>
+                        <div className="ml-10 text-gray-700 text-lg">
+                            <p className="mb-1">
+                                <span className="font-semibold text-blue-700">읽는 법:</span> {item[1]}
+                            </p>
+                            <p>
+                                <span className="font-semibold text-blue-700">한국어 뜻:</span> {item[2]}
+                            </p>
+                        </div>
+
+                        {/* Gemini API를 활용한 기능 버튼 섹션 */}
+                        <div className="flex flex-col mt-4 space-y-2">
+                            <button
+                                onClick={() => handleGenerateExample(index, item[0])}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full text-sm transition duration-300 ease-in-out shadow-md hover:shadow-lg flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={generatedResponses[index]?.loadingExample}
+                            >
+                                {generatedResponses[index]?.loadingExample ? (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                ) : (
+                                    "✨예문 생성"
+                                )}
+                            </button>
+                            {generatedResponses[index]?.example && (
+                                <div className="text-sm bg-blue-100 p-3 rounded-md italic border border-blue-200">
+                                    <p className="text-blue-800 font-semibold mb-1 flex justify-between items-center">
+                                        <span>{generatedResponses[index].example.japaneseSentence}</span>
+                                        {/* 일본어 발음 확인 버튼 */}
+                                        <button
+                                            onClick={() => handleSpeakJapanese(generatedResponses[index].example.japaneseSentence, index)}
+                                            className="ml-2 p-1 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-xs leading-none"
+                                            title="일본어 발음 듣기"
+                                            disabled={speakingIndex === index} // 현재 재생 중이면 비활성화
+                                        >
+                                            {speakingIndex === index ? '⏸️' : '▶️'}
+                                        </button>
+                                    </p>
+                                    <p className="text-blue-600">{generatedResponses[index].example.koreanTranslation}</p>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => handleExplainConcept(index, item[0])}
+                                className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-full text-sm transition duration-300 ease-in-out shadow-md hover:shadow-lg flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={generatedResponses[index]?.loadingConcept}
+                            >
+                                {generatedResponses[index]?.loadingConcept ? (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                ) : (
+                                    "✨관련 개념 설명"
+                                )}
+                            </button>
+                            {generatedResponses[index]?.concept && (
+                                <p className="text-sm text-purple-800 bg-purple-100 p-3 rounded-md italic border border-purple-200">
+                                    {generatedResponses[index].concept}
+                                </p>
+                            )}
+                        </div>
+                    </li>
+                ))}
+            </ul>
+        </section>
+    );
+};
+
+// 문제 풀이 페이지 컴포넌트
+const QuizPage = ({ quizData }) => {
+    // 사용자의 답변을 저장하는 상태
+    const [userAnswers, setUserAnswers] = useState(() =>
+        quizData.map(() => ({ userReading: '', userMeaning: '' }))
+    );
+    // 채점 결과를 저장하는 상태
+    const [results, setResults] = useState([]);
+    // 퀴즈 제출 여부 상태
+    const [submitted, setSubmitted] = useState(false);
+    // 전체 점수 상태
+    const [totalScore, setTotalScore] = useState(0);
+
+    /**
+     * 사용자의 입력 필드 값 변경을 처리합니다.
+     * @param {number} index - 수정된 퀴즈 항목의 인덱스.
+     * @param {string} field - 'userReading' 또는 'userMeaning'.
+     * @param {string} value - 입력 필드의 새 값.
+     */
+    const handleInputChange = (index, field, value) => {
+        const newAnswers = [...userAnswers];
+        newAnswers[index] = { ...newAnswers[index], [field]: value };
+        setUserAnswers(newAnswers);
+    };
+
+    /**
+     * 퀴즈 제출을 처리하고 채점합니다.
+     */
+    const handleSubmitQuiz = () => {
+        let correctCount = 0;
+        const newResults = quizData.map((item, index) => {
+            const correctReading = item[1]; // 정답 읽는 법
+            const correctMeaning = item[2]; // 정답 한국어 뜻
+            const userAnswerReading = userAnswers[index].userReading.trim();
+            const userAnswerMeaning = userAnswers[index].userMeaning.trim();
+
+            // 읽는 법과 한국어 뜻을 모두 맞혀야 정답으로 처리
+            const isReadingCorrect = userAnswerReading === correctReading;
+            const isMeaningCorrect = userAnswerMeaning === correctMeaning;
+
+            if (isReadingCorrect && isMeaningCorrect) {
+                correctCount++;
+            }
+
+            return {
+                isReadingCorrect,
+                isMeaningCorrect,
+                userAnswerReading,
+                userAnswerMeaning,
+                correctReading,
+                correctMeaning
+            };
+        });
+
+        setResults(newResults);
+        setTotalScore(correctCount);
+        setSubmitted(true); // 퀴즈가 제출되었음을 표시
+    };
+
+    return (
+        <>
+            {/* 전체 점수 표시 (제출 후) */}
+            {submitted && (
+                <div className="text-center bg-green-100 border border-green-300 text-green-800 py-3 px-6 rounded-lg mb-6 text-xl font-bold shadow-md">
+                    총 {quizData.length} 문제 중 {totalScore} 문제 정답!
+                </div>
+            )}
+
+            <section className="mb-10 break-inside-avoid">
+                <h2 className="text-2xl sm:text-3xl font-bold text-blue-700 mb-5 border-l-4 border-blue-400 pl-3">
+                    문제
+                </h2>
+                <ul className="list-none p-0 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                    {quizData.map((item, index) => (
+                        // 각 단어 퀴즈 항목
+                        <li key={index} className="flex flex-col mb-4 p-2 border border-blue-100 rounded-lg shadow-sm bg-blue-50">
+                            <div className="flex items-baseline mb-2">
+                                <span className="text-blue-900 font-semibold text-lg mr-2 w-8 text-right">
+                                    {index + 1}.
+                                </span>
+                                <span className="text-gray-800 text-2xl font-bold flex-grow">
+                                    {item[0]} {/* 일본어 한자 단어 */}
+                                </span>
+                            </div>
+                            <div className="ml-10 text-gray-700 text-lg">
+                                {/* Flexbox를 사용하여 라벨과 입력 필드가 반응형으로 배치되도록 수정 */}
+                                <p className="mb-1 flex flex-col sm:flex-row sm:items-center">
+                                    <span className="font-semibold text-blue-700 mr-2 sm:w-24 sm:flex-shrink-0">읽는 법:</span>
+                                    <input
+                                        type="text"
+                                        value={userAnswers[index].userReading}
+                                        onChange={(e) => handleInputChange(index, 'userReading', e.target.value)}
+                                        className={`flex-grow border-b-2 border-blue-300 px-2 py-1 rounded focus:outline-none focus:border-blue-500 mt-1 sm:mt-0
+                                            ${submitted && (results[index]?.isReadingCorrect ? 'border-green-500' : 'border-red-500')}`}
+                                        readOnly={submitted} // 제출 후에는 읽기 전용
+                                        aria-label={`${item[0]} 읽는 법 입력`}
+                                    />
+                                    {submitted && (
+                                        <span className={`ml-2 text-xl ${results[index]?.isReadingCorrect ? 'text-green-600' : 'text-red-600'}`}>
+                                            {results[index]?.isReadingCorrect ? '✅' : '❌'}
+                                        </span>
+                                    )}
+                                </p>
+                                <p className="flex flex-col sm:flex-row sm:items-center">
+                                    <span className="font-semibold text-blue-700 mr-2 sm:w-24 sm:flex-shrink-0">한국어 뜻:</span>
+                                    <input
+                                        type="text"
+                                        value={userAnswers[index].userMeaning}
+                                        onChange={(e) => handleInputChange(index, 'userMeaning', e.target.value)}
+                                        className={`flex-grow border-b-2 border-blue-300 px-2 py-1 rounded focus:outline-none focus:border-blue-500 mt-1 sm:mt-0
+                                            ${submitted && (results[index]?.isMeaningCorrect ? 'border-green-500' : 'border-red-500')}`}
+                                        readOnly={submitted} // 제출 후에는 읽기 전용
+                                        aria-label={`${item[0]} 한국어 뜻 입력`}
+                                    />
+                                    {submitted && (
+                                        <span className={`ml-2 text-xl ${results[index]?.isMeaningCorrect ? 'text-green-600' : 'text-red-600'}`}>
+                                            {results[index]?.isMeaningCorrect ? '✅' : '❌'}
+                                        </span>
+                                    )}
+                                </p>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+
+                {/* 퀴즈 제출 버튼 */}
+                {!submitted && ( // 제출 전까지만 버튼 보이기
+                    <div className="text-center mt-8">
+                        <button
+                            onClick={handleSubmitQuiz}
+                            className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-full text-xl transition duration-300 ease-in-out shadow-lg hover:shadow-xl"
+                        >
+                            문제 풀이 제출하기
+                        </button>
+                    </div>
+                )}
+            </section>
+
+            {/* 정답 섹션 (제출 후에만 보이도록 조건부 렌더링) */}
+            {submitted && (
+                <section className="mt-12 pt-8 border-t-2 border-blue-200 break-before-page">
+                    <h2 className="text-2xl sm:text-3xl font-bold text-blue-700 mb-5 border-l-4 border-blue-400 pl-3">
+                        정답
+                    </h2>
+                    <ul className="list-none p-0 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                        {quizData.map((item, index) => (
+                            // 각 정답 항목: item[0]은 일본어 단어, item[1]은 읽는 법, item[2]는 한국어 정답
+                            <li key={index} className="flex items-baseline mb-2">
+                                <span className="text-blue-900 font-semibold text-lg mr-2 w-8 text-right">
+                                    {index + 1}.
+                                </span>
+                                <span className="text-gray-800 text-lg flex-grow">
+                                    <span className="font-semibold text-blue-600">{item[0]}</span>
+                                    <span className="text-gray-600 text-base ml-1">({item[1]})</span>: {item[2]}
+                                </span>
+                                {/* 제출 후에만 사용자 입력과 비교하여 표시 */}
+                                <div className="ml-4 text-sm text-gray-600">
+                                    {results[index]?.isReadingCorrect ? (
+                                        <span className="text-green-600 mr-1">읽기: ✅</span>
+                                    ) : (
+                                        <span className="text-red-600 mr-1">읽기: ❌ ({results[index]?.correctReading})</span>
+                                    )}
+                                    {results[index]?.isMeaningCorrect ? (
+                                        <span className="text-green-600">뜻: ✅</span>
+                                    ) : (
+                                        <span className="text-red-600">뜻: ❌ ({results[index]?.correctMeaning})</span>
+                                    )}
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
+        </>
+    );
+};
+
+// 메인 App 컴포넌트
+const App = () => {
+    // 현재 보고 있는 페이지 상태 ('study' 또는 'quiz')
+    const [currentView, setCurrentView] = useState('quiz'); // 초기값은 '문제풀이' 페이지
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-200 p-4 sm:p-6 lg:p-8 flex flex-col items-center font-inter">
+            {/* 페이지 전환 버튼 */}
+            <div className="w-full max-w-4xl flex justify-end space-x-4 mb-4">
+                <button
+                    onClick={() => setCurrentView('study')}
+                    className={`px-6 py-2 rounded-full font-bold text-lg transition duration-300 ease-in-out shadow-md
+                        ${currentView === 'study' ? 'bg-blue-700 text-white' : 'bg-blue-300 text-blue-900 hover:bg-blue-400'}`}
+                >
+                    단어공부
+                </button>
+                <button
+                    onClick={() => setCurrentView('quiz')}
+                    className={`px-6 py-2 rounded-full font-bold text-lg transition duration-300 ease-in-out shadow-md
+                        ${currentView === 'quiz' ? 'bg-blue-700 text-white' : 'bg-blue-300 text-blue-900 hover:bg-blue-400'}`}
+                >
+                    문제풀이
+                </button>
+            </div>
+
+            {/* 퀴즈 내용 컨테이너: 흰색 배경, 둥근 모서리, 그림자, 최대 너비 설정 */}
+            <div className="bg-white p-6 sm:p-8 lg:p-10 rounded-2xl shadow-xl w-full max-w-4xl border border-blue-200">
+                {/* 퀴즈 타이틀 */}
+                <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-center text-blue-800 mb-6 sm:mb-8 pb-4 border-b-4 border-blue-300">
+                    수의대 소논문 단어퀴즈 1회차
+                </h1>
+
+                {/* 현재 선택된 페이지를 렌더링 */}
+                {currentView === 'study' ? (
+                    <StudyPage quizData={initialQuizData} />
+                ) : (
+                    <QuizPage quizData={initialQuizData} />
+                )}
+
+                {/* 하단 푸터/안내 */}
+                <div className="mt-10 text-center text-blue-600 text-sm italic">
+                    이 퀴즈는 학습을 위해 제작되었습니다. 무단 배포를 금합니다.
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default App;
